@@ -1,5 +1,8 @@
 # Sample files
 prompt_map.json
 prompts.db
+*.db-journal
 inputs.txt
+entities.txt
 .idea
+__pycache__
