@@ -14,6 +14,7 @@ if __name__ == "__main__":
     # 2. Prepare a dataset.
     ds = load_dataset("numind/NuNER")
 
+
     # For simplicity, split the dataset into training and evaluation halves.
     # split_dataset = ds.train_test_split(test_size=0.3)
     # train_dataset = split_dataset["train"]
@@ -66,18 +67,17 @@ if __name__ == "__main__":
             mapped_results["input"].append(tokenized_text)
             mapped_results["output"].append(entity_spans)
 
-        return mapped_results
+        eval_count = int(len(processed_dataset) * 0.15)
+        return {
+            "train": {"tokenized_text": mapped_results["input"][eval_count:],
+                      "ner": mapped_results["output"][eval_count:]},
+            "eval": {"tokenized_text": mapped_results["input"][:eval_count],
+                     "ner": mapped_results["output"][:eval_count]},
+        }
 
 
     # Tokenize both training and evaluation datasets.
     processed_dataset = ds.map(tokenize_and_align_labels, batched=True)
-
-    # Make train / eval split
-    eval_count = int(len(processed_dataset) * 0.15)
-    train_dataset = {"tokenized_output": processed_dataset["entity"]["input"][eval_count:],
-                     "ner": processed_dataset["entity"]["output"][eval_count:]}
-    eval_dataset = {"tokenized_output": processed_dataset["entity"]["input"][:eval_count],
-                    "ner": processed_dataset["entity"]["output"][:eval_count]}
 
     # 4. Create a data collator
     data_collator = DataCollator(model.config, data_processor=model.data_processor, prepare_labels=True)
@@ -85,7 +85,7 @@ if __name__ == "__main__":
     # 5. Set up training arguments.
     num_steps = 500
     batch_size = 8
-    data_size = len(train_dataset)
+    data_size = len(processed_dataset["train"])
     num_batches = data_size // batch_size
     num_epochs = max(1, num_steps // num_batches)
 
@@ -111,8 +111,8 @@ if __name__ == "__main__":
     trainer = Trainer(
         model=model,
         args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
+        train_dataset=processed_dataset["train"],
+        eval_dataset=processed_dataset["eval"],
         tokenizer=model.data_processor.transformer_tokenizer,
         data_collator=data_collator,
     )
