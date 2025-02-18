@@ -67,7 +67,7 @@ if __name__ == "__main__":
             mapped_results["input"].append(tokenized_text)
             mapped_results["output"].append(entity_spans)
 
-        eval_count = int(len(processed_dataset) * 0.15)
+        eval_count = int(len(mapped_results) * 0.15)
         return {
             "train": {"tokenized_text": mapped_results["input"][eval_count:],
                       "ner": mapped_results["output"][eval_count:]},
