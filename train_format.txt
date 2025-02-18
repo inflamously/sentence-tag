@@ -1,0 +1,25 @@
+Format:
+    {
+        "tokenized_text": string[],
+        "ner": Array<
+            Tuple<
+              number, // Sentence start
+              number, // Sentence end
+              string // Entity name
+            >
+        >
+    },
+
+Example:
+    {
+        "tokenized_text": [
+            "Grandfather on a beautiful day at the beach"
+        ],
+        "ner": [
+            [
+                5,
+                7,
+                "Scenery"
+            ]
+        ]
+    }
