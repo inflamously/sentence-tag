@@ -26,6 +26,9 @@ if __name__ == "__main__":
     def process_dataset(example):
         results = []
         for i in range(len(example["input"])):
+            if example["input"][i] is None or example["output"][i] is None:
+                results.append({"tokenized_text": ['N/A'], "ner": [{"s": -1, "e": -1, "key": 'N/A'}]})
+                continue
             tokens = example["input"][i].split()
             entities = example["output"][i]
             entities_map_list = list(filter(lambda e: len(e) > 1, [entity.split("<>") for entity in ast.literal_eval(entities)]))
@@ -48,17 +51,19 @@ if __name__ == "__main__":
                         break
 
                 if s_index is None or e_index is None:
+                    # print(tokens, target_sequence_tokens)
                     s_index = -1
                     e_index = -1
                     entity_key = 'N/A'
 
-                ner_span.extend((s_index, e_index, entity_key))
+                ner_span.extend({"s": s_index, "e": e_index, "key": entity_key})
             results.append({"tokenized_text": example["input"][i], "ner": ner_span})
-        return results
+        return {"processed_items": results}
 
 
     ds = load_dataset("numind/NuNER")["entity"]
-    ds.map(process_dataset, batched=True, batch_size=100)
+    # inputs, outputs = ds["input"], ds["output"]
+    processed_ds = ds.map(process_dataset, batched=True)
 
     train_dataset = GLiNERDataset(ds, config=model.config, tokenizer=tokenizer, words_splitter=words_splitter)
 
