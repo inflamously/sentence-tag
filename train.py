@@ -1,83 +1,66 @@
-# --- Fine-tuning GLiNER for NER Example
 import ast
 import re
 
+from attr.setters import NO_OP
 from gliner import GLiNER
-from gliner.data_processing import DataCollator
+from gliner.data_processing import DataCollator, GLiNERDataset, WordsSplitter
 from transformers import TrainingArguments, Trainer, DataCollatorForTokenClassification, AutoTokenizer
 from datasets import load_dataset, tqdm
 
 if __name__ == "__main__":
     # 1. Load the pretrained GLiNER model.
     model = GLiNER.from_pretrained("knowledgator/modern-gliner-bi-large-v1.0")
+    tokenizer = AutoTokenizer.from_pretrained(model.config.model_name)
+    words_splitter = WordsSplitter(model.config.words_splitter_type)
+
 
     # 2. Prepare a dataset.
-    ds = load_dataset("numind/NuNER")
 
-
-    # For simplicity, split the dataset into training and evaluation halves.
-    # split_dataset = ds.train_test_split(test_size=0.3)
-    # train_dataset = split_dataset["train"]
-    # eval_dataset = split_dataset["test"]
-
-    # 3. Define a tokenization function that also aligns the labels to the sub-tokens.
-    def tokenize_text(text):
+    def process_token(token) -> list[str]:
         """Tokenizes the input text into a list of tokens."""
-        if not text: return ['']
-        words = re.findall(r'\w+(?:[-_]\w+)*|\S', text)
-        return list(map(lambda w: w.replace("'", '"'), words))
+        if not token: return ['']
+        words = re.findall(r'\w+(?:[-_]\w+)*|\S', token)
+        return list(map(lambda w: w.replace("'", '"').lower(), words))
 
 
-    def tokenize_and_align_labels(samples):
-        """
-            Original code: https://github.com/urchade/GLiNER/blob/main/data/process_nuner.py
-            Modified to match train.py
-            Processes entities in the dataset to extract tokenized text and named entity spans.
-        """
-        tokenized_text = [tokenize_text(sample) for sample in samples["input"]]
-        parsed_output = [ast.literal_eval(sample) for sample in samples["output"]]
+    def process_dataset(example):
+        results = []
+        for i in range(len(example["input"])):
+            tokens = example["input"][i].split()
+            entities = example["output"][i]
+            entities_map_list = list(filter(lambda e: len(e) > 1, [entity.split("<>") for entity in ast.literal_eval(entities)]))
+            tokens = [token for token_list in [process_token(token) for token in tokens] for token in token_list]
+            ner_span = []
+            for entity_map in entities_map_list:
+                s_index = None
+                e_index = None
+                target_sequence, entity_key = entity_map
+                entity_key = entity_key.strip()
+                target_sequence_tokens = process_token(target_sequence)
 
-        mapped_results = {
-            "input": [],
-            "output": [],
-        }
+                for subset_index in range(len(tokens) - len(target_sequence_tokens) + 1):
+                    sliced_tokens = tokens[subset_index:subset_index + len(target_sequence_tokens)]
+                    if sliced_tokens != target_sequence_tokens:
+                        continue
+                    else:
+                        s_index = subset_index
+                        e_index = subset_index + (len(target_sequence_tokens) - 1)
+                        break
 
-        for tokenized_text, entity_output in zip(tokenized_text, parsed_output):
-            if any(map(lambda ent: ent.count("<>") != 1, entity_output)):
-                mapped_results["input"].append(tokenized_text)
-                mapped_results["output"].append([{"start": -1, "end": -1, "entity": "N/A"}])
-                continue
+                if s_index is None or e_index is None:
+                    s_index = -1
+                    e_index = -1
+                    entity_key = 'N/A'
 
-            entity_output_clean = list(filter(lambda x: len(x) > 0, entity_output))
-            entity_texts, entity_types = zip(*[output.split("<>") for output in entity_output_clean])
-            entity_spans = []
-            for j, entity_text in enumerate(entity_texts):
-                entity_tokens = tokenize_text(entity_text)
-                matches = []
-                for i in range(len(tokenized_text) - len(entity_tokens) + 1):
-                    if " ".join(tokenized_text[i:i + len(entity_tokens)]).lower() == " ".join(entity_tokens).lower():
-                        matches.append({
-                            "start": i,
-                            "end": i + len(entity_tokens) - 1,
-                            "entity": entity_types[j]
-                        })
-                if matches:
-                    entity_spans.extend(matches)
-
-            mapped_results["input"].append(tokenized_text)
-            mapped_results["output"].append(entity_spans)
-
-        eval_count = int(len(mapped_results) * 0.15)
-        return {
-            "train": {"tokenized_text": mapped_results["input"][eval_count:],
-                      "ner": mapped_results["output"][eval_count:]},
-            "eval": {"tokenized_text": mapped_results["input"][:eval_count],
-                     "ner": mapped_results["output"][:eval_count]},
-        }
+                ner_span.extend((s_index, e_index, entity_key))
+            results.append({"tokenized_text": example["input"][i], "ner": ner_span})
+        return results
 
 
-    # Tokenize both training and evaluation datasets.
-    processed_dataset = ds.map(tokenize_and_align_labels, batched=True)
+    ds = load_dataset("numind/NuNER")["entity"]
+    ds.map(process_dataset, batched=True, batch_size=100)
+
+    train_dataset = GLiNERDataset(ds, config=model.config, tokenizer=tokenizer, words_splitter=words_splitter)
 
     # 4. Create a data collator
     data_collator = DataCollator(model.config, data_processor=model.data_processor, prepare_labels=True)
@@ -85,36 +68,39 @@ if __name__ == "__main__":
     # 5. Set up training arguments.
     num_steps = 500
     batch_size = 8
-    data_size = len(processed_dataset["train"])
+    data_size = len(ds["full"])
     num_batches = data_size // batch_size
     num_epochs = max(1, num_steps // num_batches)
 
     training_args = TrainingArguments(
-        output_dir="models",
-        learning_rate=5e-6,
-        weight_decay=0.01,
-        # others_lr=1e-5,
-        # others_weight_decay=0.01,
-        lr_scheduler_type="linear",  # cosine
-        warmup_ratio=0.1,
-        per_device_train_batch_size=batch_size,
-        per_device_eval_batch_size=batch_size,
-        num_train_epochs=num_epochs,
-        evaluation_strategy="steps",
-        save_steps=100,
-        save_total_limit=10,
-        dataloader_num_workers=0,
+        output_dir="logs",
+        learning_rate=1e-5,
+        weight_decay=0.1,
+        others_lr=3e-5,
+        others_weight_decay=0.01,
+        # focal_loss_gamma=config.loss_gamma,
+        # focal_loss_alpha=config.loss_alpha,
+        lr_scheduler_type="cosine",
+        warmup_ratio=0.05,
+        per_device_train_batch_size=8,
+        per_device_eval_batch_size=8,
+        max_grad_norm=10.0,
+        max_steps=100000,
+        evaluation_strategy="epoch",
+        save_steps=5000,
+        save_total_limit=3,
+        dataloader_num_workers=8,
         use_cpu=False,
         report_to="none",
+        bf16=True,
     )
 
     trainer = Trainer(
         model=model,
         args=training_args,
-        train_dataset=processed_dataset["train"],
-        eval_dataset=processed_dataset["eval"],
-        tokenizer=model.data_processor.transformer_tokenizer,
+        train_dataset=train_dataset,
+        eval_dataset=test_dataset,
+        tokenizer=tokenizer,
         data_collator=data_collator,
     )
-
     trainer.train()
