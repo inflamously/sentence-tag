@@ -27,11 +27,16 @@ if __name__ == "__main__":
         results = []
         for i in range(len(example["input"])):
             if example["input"][i] is None or example["output"][i] is None:
-                results.append({"tokenized_text": ['N/A'], "ner": [{"s": -1, "e": -1, "key": 'N/A'}]})
+                results.append({"tokenized_text": 'N/A', "ner": [{"s": -1, "e": -1, "key": 'N/A'}]})
                 continue
+
             tokens = example["input"][i].split()
             entities = example["output"][i]
             entities_map_list = list(filter(lambda e: len(e) > 1, [entity.split("<>") for entity in ast.literal_eval(entities)]))
+            if len(entities_map_list) <= 0:
+                results.append({"tokenized_text": example["input"][i], "ner": [{"s": -1, "e": -1, "key": 'N/A'}]})
+                continue
+
             tokens = [token for token_list in [process_token(token) for token in tokens] for token in token_list]
             ner_span = []
             for entity_map in entities_map_list:
