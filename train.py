@@ -56,7 +56,7 @@ if __name__ == "__main__":
                     e_index = -1
                     entity_key = 'N/A'
 
-                ner_span.extend({"s": s_index, "e": e_index, "key": entity_key})
+                ner_span.append({"s": s_index, "e": e_index, "key": entity_key})
             results.append({"tokenized_text": example["input"][i], "ner": ner_span})
         return {"processed_items": results}
 
