@@ -70,7 +70,7 @@ if __name__ == "__main__":
     # inputs, outputs = ds["input"], ds["output"]
     processed_ds = ds.map(process_dataset, batched=True)
 
-    train_dataset = GLiNERDataset(ds, config=model.config, tokenizer=tokenizer, words_splitter=words_splitter)
+    train_dataset = GLiNERDataset(processed_ds['processed_items'], config=model.config, tokenizer=tokenizer, words_splitter=words_splitter)
 
     # 4. Create a data collator
     data_collator = DataCollator(model.config, data_processor=model.data_processor, prepare_labels=True)
