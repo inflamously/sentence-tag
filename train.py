@@ -1,11 +1,83 @@
 import ast
 import re
+from random import random
+from typing import Optional
 
-from attr.setters import NO_OP
-from gliner import GLiNER
-from gliner.data_processing import DataCollator, GLiNERDataset, WordsSplitter
+from gliner import GLiNER, GLiNERConfig
+from gliner.data_processing import DataCollator, GLiNERDataset, WordsSplitter, TokenProcessor, SpanProcessor
 from transformers import TrainingArguments, Trainer, DataCollatorForTokenClassification, AutoTokenizer
-from datasets import load_dataset, tqdm
+from datasets import load_dataset, tqdm, Dataset
+
+
+class CustomGLiNERDataset(Dataset):
+    def __init__(self, examples,
+                 config: Optional[GLiNERConfig],
+                 tokenizer: Optional[AutoTokenizer] = None,
+                 words_splitter: Optional[WordsSplitter] = None,
+                 data_processor=None,
+                 entities=None,
+                 get_negatives: bool = True):
+        self._data = examples
+        self.config = config
+        if data_processor is not None:
+            self.data_processor = data_processor
+        else:
+            if config.span_mode == "token_level":
+                self.data_processor = TokenProcessor(config, tokenizer, words_splitter, preprocess_text=True)
+            else:
+                self.data_processor = SpanProcessor(config, tokenizer, words_splitter, preprocess_text=True)
+
+        self.max_neg_type_ratio = int(self.config.max_neg_type_ratio)
+        self.get_negatives = get_negatives
+        if not entities:
+            self.all_entities = self._collect_all_entities()
+        else:
+            self.all_entities = entities
+        self.max_negatives = min(50, len(self.all_entities))
+
+    def _get_entities_from_example(self, example):
+        entities = {ner["key"] for ner in example['ner']}
+        return entities
+
+    def _collect_all_entities(self):
+        print("Collecting all entities...")
+        all_entities = set()
+        for example in tqdm(self._data):
+            curr_entities = self._get_entities_from_example(example)
+            all_entities.update(curr_entities)
+        print('Total number of entity classes: ', len(all_entities))
+        return list(all_entities)
+
+    def _get_negatives(self):
+        negatives = random.sample(self.all_entities, k=self.max_negatives)
+        random.shuffle(negatives)
+        return negatives
+
+    def __len__(self):
+        return len(self._data)
+
+    def __getitem__(self, idx):
+        try:
+            example = self._data[idx]
+            if self.get_negatives:
+                curr_negatives = self._get_negatives()
+            else:
+                curr_negatives = None
+
+            raw_batch = self.data_processor.collate_raw_batch([example], negatives=curr_negatives)
+
+            model_input = self.data_processor.collate_fn(raw_batch, prepare_labels=True)
+            if 'span_idx' in raw_batch:
+                model_input['span_idx'] = raw_batch['span_idx']
+            if 'span_mask' in raw_batch:
+                model_input['span_mask'] = raw_batch['span_mask']
+            if 'seq_length' in raw_batch:
+                model_input['text_lengths'] = raw_batch['seq_length']
+            return model_input
+        except Exception as e:
+            print(f"Skipping getting item due to error: {e}")
+            return None
+
 
 if __name__ == "__main__":
     # 1. Load the pretrained GLiNER model.
@@ -32,7 +104,8 @@ if __name__ == "__main__":
 
             tokens = example["input"][i].split()
             entities = example["output"][i]
-            entities_map_list = list(filter(lambda e: len(e) > 1, [entity.split("<>") for entity in ast.literal_eval(entities)]))
+            entities_map_list = list(
+                filter(lambda e: len(e) > 1, [entity.split("<>") for entity in ast.literal_eval(entities)]))
             if len(entities_map_list) <= 0:
                 results.append({"tokenized_text": example["input"][i], "ner": [{"s": -1, "e": -1, "key": 'N/A'}]})
                 continue
@@ -68,9 +141,10 @@ if __name__ == "__main__":
 
     ds = load_dataset("numind/NuNER")["entity"]
     # inputs, outputs = ds["input"], ds["output"]
-    processed_ds = ds.map(process_dataset, batched=True)
+    processed_ds = ds.map(process_dataset, batched=True).remove_columns(["input", "output"])
 
-    train_dataset = GLiNERDataset(processed_ds['processed_items'], config=model.config, tokenizer=tokenizer, words_splitter=words_splitter)
+    train_dataset = CustomGLiNERDataset(processed_ds['processed_items'], config=model.config, tokenizer=tokenizer,
+                                        words_splitter=words_splitter)
 
     # 4. Create a data collator
     data_collator = DataCollator(model.config, data_processor=model.data_processor, prepare_labels=True)
