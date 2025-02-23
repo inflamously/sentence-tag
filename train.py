@@ -14,12 +14,6 @@ from datasets import load_dataset
 device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 
 
-class CustomGLiNERDataset(GLiNERDataset):
-    def _get_entities_from_example(self, example):
-        entities = {ner["key"] for ner in example['ner']}
-        return entities
-
-
 if __name__ == "__main__":
     # 1. Load the pretrained GLiNER model.
     model = GLiNER.from_pretrained("urchade/gliner_small-v2.1")
@@ -96,7 +90,10 @@ if __name__ == "__main__":
                 "ner": [[*item['ner'][ner_idx], item['entities'][ner_idx]] for ner_idx in range(len(item['ner']))]}
 
 
-    train_dataset = list(map(remap_output, processed_ds["processed_items"][:10]))
+    train_dataset = list(map(remap_output, processed_ds["processed_items"]))
+    eval_count = len(train_dataset) * 0.30
+    eval_dataset = processed_ds["processed_items"][:eval_count]
+    train_dataset = train_dataset[eval_count:]
 
     # 4. Create a data collator
     data_collator = DataCollator(model.config, data_processor=model.data_processor, prepare_labels=True)
@@ -109,6 +106,7 @@ if __name__ == "__main__":
     num_epochs = max(1, num_steps // num_batches)
 
     training_args = TrainingArguments(
+        remove_unused_columns=False,
         output_dir="logs",
         learning_rate=1e-5,
         weight_decay=0.1,
@@ -122,7 +120,7 @@ if __name__ == "__main__":
         per_device_eval_batch_size=8,
         max_grad_norm=10.0,
         max_steps=100000,
-        # evaluation_strategy="epoch",
+        evaluation_strategy="epoch",
         save_steps=5000,
         save_total_limit=3,
         dataloader_num_workers=8,
@@ -135,8 +133,8 @@ if __name__ == "__main__":
         model=model,
         args=training_args,
         train_dataset=train_dataset,
-        # eval_dataset=test_dataset,
-        tokenizer=tokenizer,
+        eval_dataset=eval_dataset,
+        processing_class=tokenizer,
         data_collator=data_collator,
     )
 
