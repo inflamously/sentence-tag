@@ -1,6 +1,7 @@
 import ast
 import re
 
+import pyarrow
 from gliner import GLiNER
 from gliner.data_processing import DataCollator, GLiNERDataset, WordsSplitter
 from transformers import TrainingArguments, Trainer, AutoTokenizer
@@ -33,19 +34,21 @@ if __name__ == "__main__":
         results = []
         for i in range(len(example["input"])):
             if example["input"][i] is None or example["output"][i] is None:
-                results.append({"tokenized_text": 'N/A', "ner": [{"s": -1, "e": -1, "key": 'N/A'}]})
+                results.append({"tokenized_text": ['N/A'], "ner": [(-1, -1)], "entities": ['N/A']})
                 continue
 
             tokens = example["input"][i].split()
+            tokens = [token for token_list in [process_token(token) for token in tokens] for token in token_list]
+
             entities = example["output"][i]
             entities_map_list = list(
                 filter(lambda e: len(e) > 1, [entity.split("<>") for entity in ast.literal_eval(entities)]))
             if len(entities_map_list) <= 0:
-                results.append({"tokenized_text": example["input"][i], "ner": [{"s": -1, "e": -1, "key": 'N/A'}]})
+                results.append({"tokenized_text": tokens, "ner": [(-1, -1)], "entities": ['N/A']})
                 continue
 
-            tokens = [token for token_list in [process_token(token) for token in tokens] for token in token_list]
             ner_span = []
+            entities = []
             for entity_map in entities_map_list:
                 s_index = None
                 e_index = None
@@ -68,8 +71,12 @@ if __name__ == "__main__":
                     e_index = -1
                     entity_key = 'N/A'
 
-                ner_span.append({"s": s_index, "e": e_index, "key": entity_key})
-            results.append({"tokenized_text": example["input"][i], "ner": ner_span})
+                entities.append(entity_key)
+                ner_span.append((s_index, e_index))
+            if len(entities) <= 0:
+                ner_span.append((-1, -1))
+                entities = ['N/A']
+            results.append({"tokenized_text": tokens, "ner": ner_span, "entities": entities})
         return {"processed_items": results}
 
 
@@ -77,8 +84,10 @@ if __name__ == "__main__":
     # inputs, outputs = ds["input"], ds["output"]
     processed_ds = ds.map(process_dataset, batched=True).remove_columns(["input", "output"])
 
-    train_dataset = CustomGLiNERDataset(processed_ds['processed_items'], config=model.config, tokenizer=tokenizer,
-                                        words_splitter=words_splitter)
+    def remap_output(item):
+        return {"tokenized_text": item['tokenized_text'], "ner": [[*item['ner'][ner_idx], item['entities'][ner_idx]] for ner_idx in range(len(item['ner']))]}
+
+    train_dataset = list(map(remap_output, processed_ds["processed_items"]))
 
     # 4. Create a data collator
     data_collator = DataCollator(model.config, data_processor=model.data_processor, prepare_labels=True)
@@ -94,8 +103,8 @@ if __name__ == "__main__":
         output_dir="logs",
         learning_rate=1e-5,
         weight_decay=0.1,
-        #others_lr=3e-5,
-        #others_weight_decay=0.01,
+        # others_lr=3e-5,
+        # others_weight_decay=0.01,
         # focal_loss_gamma=config.loss_gamma,
         # focal_loss_alpha=config.loss_alpha,
         lr_scheduler_type="cosine",
@@ -104,7 +113,7 @@ if __name__ == "__main__":
         per_device_eval_batch_size=8,
         max_grad_norm=10.0,
         max_steps=100000,
-        evaluation_strategy="epoch",
+        # evaluation_strategy="epoch",
         save_steps=5000,
         save_total_limit=3,
         dataloader_num_workers=8,
