@@ -16,7 +16,7 @@ device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('
 
 if __name__ == "__main__":
     # 1. Load the pretrained GLiNER model.
-    model = GLiNER.from_pretrained("urchade/gliner_small-v2.1")
+    model = GLiNER.from_pretrained("knowledgator/modern-gliner-bi-large-v1.0")
     tokenizer = AutoTokenizer.from_pretrained(model.config.model_name)
     words_splitter = WordsSplitter(model.config.words_splitter_type)
 
@@ -100,9 +100,10 @@ if __name__ == "__main__":
 
     # 5. Set up training arguments.
     num_steps = 500
-    batch_size = 8
+    train_batch_size = 32
+    eval_batch_size = 4
     data_size = len(train_dataset)
-    num_batches = data_size // batch_size
+    num_batches = data_size // train_batch_size
     num_epochs = max(1, num_steps // num_batches)
 
     training_args = TrainingArguments(
@@ -116,8 +117,8 @@ if __name__ == "__main__":
         # focal_loss_alpha=config.loss_alpha,
         lr_scheduler_type="cosine",
         warmup_ratio=0.05,
-        per_device_train_batch_size=48,
-        per_device_eval_batch_size=48,
+        per_device_train_batch_size=train_batch_size,
+        per_device_eval_batch_size=eval_batch_size,
         max_grad_norm=10.0,
         max_steps=100000,
         evaluation_strategy="epoch",
