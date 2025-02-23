@@ -91,8 +91,8 @@ if __name__ == "__main__":
 
 
     train_dataset = list(map(remap_output, processed_ds["processed_items"]))
-    eval_count = len(train_dataset) * 0.30
-    eval_dataset = processed_ds["processed_items"][:eval_count]
+    eval_count = int(len(train_dataset) * 0.30)
+    eval_dataset = train_dataset[:eval_count]
     train_dataset = train_dataset[eval_count:]
 
     # 4. Create a data collator
@@ -116,8 +116,8 @@ if __name__ == "__main__":
         # focal_loss_alpha=config.loss_alpha,
         lr_scheduler_type="cosine",
         warmup_ratio=0.05,
-        per_device_train_batch_size=8,
-        per_device_eval_batch_size=8,
+        per_device_train_batch_size=48,
+        per_device_eval_batch_size=48,
         max_grad_norm=10.0,
         max_steps=100000,
         evaluation_strategy="epoch",
