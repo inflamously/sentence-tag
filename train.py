@@ -1,11 +1,17 @@
 import ast
+import os
 import re
 
-import pyarrow
+import torch
+
+os.environ["TOKENIZERS_PARALLELISM"] = "true"
+
 from gliner import GLiNER
 from gliner.data_processing import DataCollator, GLiNERDataset, WordsSplitter
 from transformers import TrainingArguments, Trainer, AutoTokenizer
 from datasets import load_dataset
+
+device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 
 
 class CustomGLiNERDataset(GLiNERDataset):
@@ -16,7 +22,7 @@ class CustomGLiNERDataset(GLiNERDataset):
 
 if __name__ == "__main__":
     # 1. Load the pretrained GLiNER model.
-    model = GLiNER.from_pretrained("knowledgator/modern-gliner-bi-large-v1.0")
+    model = GLiNER.from_pretrained("urchade/gliner_small-v2.1")
     tokenizer = AutoTokenizer.from_pretrained(model.config.model_name)
     words_splitter = WordsSplitter(model.config.words_splitter_type)
 
@@ -84,10 +90,13 @@ if __name__ == "__main__":
     # inputs, outputs = ds["input"], ds["output"]
     processed_ds = ds.map(process_dataset, batched=True).remove_columns(["input", "output"])
 
-    def remap_output(item):
-        return {"tokenized_text": item['tokenized_text'], "ner": [[*item['ner'][ner_idx], item['entities'][ner_idx]] for ner_idx in range(len(item['ner']))]}
 
-    train_dataset = list(map(remap_output, processed_ds["processed_items"]))
+    def remap_output(item):
+        return {"tokenized_text": item['tokenized_text'],
+                "ner": [[*item['ner'][ner_idx], item['entities'][ner_idx]] for ner_idx in range(len(item['ner']))]}
+
+
+    train_dataset = list(map(remap_output, processed_ds["processed_items"][:10]))
 
     # 4. Create a data collator
     data_collator = DataCollator(model.config, data_processor=model.data_processor, prepare_labels=True)
